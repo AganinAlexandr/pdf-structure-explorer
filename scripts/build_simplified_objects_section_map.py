@@ -88,6 +88,10 @@ SIMPLE_SECTION_CODES = {
     "ВС", "ГС", "ВО", "ТТР", "ИД",
 }
 
+SECTION_CANONICAL_MAP = {
+    "ПОКР": "ПОС",
+}
+
 
 def list_pdf_files(root: Path) -> list[Path]:
     script = (
@@ -144,6 +148,10 @@ def normalize_ios_with_suffix(tokens: list[str], index: int, code: str) -> str:
     return SECTION_ALIASES.get(code, code)
 
 
+def canonicalize_section_code(code: str) -> str:
+    return SECTION_CANONICAL_MAP.get(code.upper(), code.upper())
+
+
 def extract_section_type(file_name: str) -> tuple[str, str, str]:
     normalized = normalize_name(file_name)
     if any(marker in normalized for marker in EXCLUDE_MARKERS):
@@ -151,7 +159,8 @@ def extract_section_type(file_name: str) -> tuple[str, str, str]:
 
     for phrase, code in PHRASE_SECTION_MAP.items():
         if phrase in normalized:
-            return code, code, "phrase"
+            canonical = canonicalize_section_code(code)
+            return canonical, canonical, "phrase"
 
     tokens = token_candidates(normalized)
     for index, token in enumerate(tokens):
@@ -161,15 +170,18 @@ def extract_section_type(file_name: str) -> tuple[str, str, str]:
             if match:
                 code = match.group(1).upper()
                 code = normalize_ios_with_suffix(tokens, index, code)
-                return code, code, "code"
+                canonical = canonicalize_section_code(code)
+                return canonical, canonical, "code"
         simple_base = upper.split(".", 1)[0]
         if simple_base in SIMPLE_SECTION_CODES:
-            return simple_base, simple_base, "token"
+            canonical = canonicalize_section_code(simple_base)
+            return canonical, canonical, "token"
 
     raw_match = RAW_SECTION_PATTERN.search(normalized)
     if raw_match:
         raw = raw_match.group(1).strip("._- ").upper()
-        return raw, raw, "raw_section"
+        canonical = canonicalize_section_code(raw)
+        return canonical, canonical, "raw_section"
 
     return "", "", "non_section"
 
