@@ -134,6 +134,16 @@ def token_candidates(normalized: str) -> list[str]:
     return [token for token in TOKEN_SPLIT_PATTERN.split(normalized) if token]
 
 
+def normalize_ios_with_suffix(tokens: list[str], index: int, code: str) -> str:
+    if not code.startswith("ИОС"):
+        return SECTION_ALIASES.get(code, code)
+    if index + 1 < len(tokens):
+        next_token = tokens[index + 1].upper()
+        if next_token in SIMPLE_SECTION_CODES:
+            return next_token
+    return SECTION_ALIASES.get(code, code)
+
+
 def extract_section_type(file_name: str) -> tuple[str, str, str]:
     normalized = normalize_name(file_name)
     if any(marker in normalized for marker in EXCLUDE_MARKERS):
@@ -144,13 +154,13 @@ def extract_section_type(file_name: str) -> tuple[str, str, str]:
             return code, code, "phrase"
 
     tokens = token_candidates(normalized)
-    for token in tokens:
+    for index, token in enumerate(tokens):
         upper = token.upper()
         for pattern in CODE_PATTERNS:
             match = pattern.fullmatch(upper)
             if match:
                 code = match.group(1).upper()
-                code = SECTION_ALIASES.get(code, code)
+                code = normalize_ios_with_suffix(tokens, index, code)
                 return code, code, "code"
         simple_base = upper.split(".", 1)[0]
         if simple_base in SIMPLE_SECTION_CODES:
