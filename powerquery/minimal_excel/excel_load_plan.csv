@@ -1,0 +1,18 @@
+query_name,load_mode,target_sheet,recommended_order,scenario,notes
+CurrentBundlePath,connection_only,,1,single_pdf,Path to one exported doc bundle
+ExportRootPath,connection_only,,2,multi_pdf,Path to exports root
+fxCsv,connection_only,,3,single_pdf,Helper function for CSV loading
+fxCombineCsvFromBundles,connection_only,,4,multi_pdf,Helper function for cross-bundle loading
+Documents,connection_only,,5,single_pdf,Base document metadata
+Pages,connection_only,,6,single_pdf,Base page metadata
+Elements,connection_only,,7,single_pdf,Base element rows
+ElementGroups,connection_only,,8,single_pdf,Element group dictionary
+ElementSubtypes,connection_only,,9,single_pdf,Element subtype dictionary
+Tables,connection_only,,10,single_pdf,Base table rows
+TableCells,connection_only,,11,single_pdf,Base table cell rows
+PageSummary,table,01_PageSummary,12,single_pdf,Main page-level summary
+ElementsExpanded,table,02_Elements,13,single_pdf,Expanded element list for analysis
+TablesExpanded,table,03_Tables,14,single_pdf,Expanded table list for analysis
+LanguageSummary,table,04_Languages,15,single_pdf,Language overview including broken encodings
+AllBundles_PageSummary,table,90_All_PageSummary,16,multi_pdf,Compare page summaries across many PDFs
+AllBundles_Tables,table,91_All_Tables,17,multi_pdf,Compare detected tables across many PDFs
