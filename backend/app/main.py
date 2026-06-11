@@ -78,6 +78,7 @@ async def upload_document(file: UploadFile = File(...)):
     except Exception as e:                                  # noqa: BLE001
         raise ApiError("UPLOAD_FAILED", str(e), 500)
     return ok({"documentId": d.document_id, "fileName": d.file_name,
+               "fileCrc32": d.file_crc32,
                "pageCount": d.page_count, "status": d.status})
 
 

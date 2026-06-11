@@ -12,6 +12,7 @@ export interface ApiEnvelope<T> {
 export interface DocumentCard {
   documentId: string;
   fileName: string;
+  fileCrc32?: string;
   pageCount: number;
   status: string;
   hasNativeLayers: boolean;

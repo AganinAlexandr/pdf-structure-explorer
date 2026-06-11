@@ -40,10 +40,10 @@ def export_csv_bundle(doc, export_dir):
 
     card = doc.card()
     emit("documents.csv",
-         ["document_id", "file_name", "file_path", "file_size_bytes",
+         ["document_id", "file_name", "file_crc32", "file_path", "file_size_bytes",
           "page_count", "pdf_version", "has_native_layers", "has_text_layer",
           "has_images", "has_tables", "parse_status", "parsed_at"],
-         [[doc.document_id, card["fileName"], card["filePath"],
+         [[doc.document_id, card["fileName"], card["fileCrc32"], card["filePath"],
            card["fileSizeBytes"], card["pageCount"], card["pdfVersion"],
            card["hasNativeLayers"], card["hasTextLayer"], card["hasImages"],
            card["hasTables"], card["status"], card["parsedAt"]]])

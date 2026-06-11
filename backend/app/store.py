@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Хранилище документов: загрузка, фоновый разбор, агрегаты."""
 from __future__ import annotations
-import os, threading, uuid, datetime
+import os, threading, uuid, datetime, zlib
 import fitz
 
 from app import model
@@ -15,11 +15,12 @@ def _now():
 
 
 class Document:
-    def __init__(self, document_id, file_name, file_path, size):
+    def __init__(self, document_id, file_name, file_path, size, crc32):
         self.document_id = document_id
         self.file_name = file_name
         self.file_path = file_path
         self.file_size = size
+        self.file_crc32 = crc32
         self.status = "uploaded"        # uploaded|processing|parsed|failed
         self.error = ""
         self.page_count = 0
@@ -110,6 +111,7 @@ class Document:
         any_text = any(p["textSegments"] for p in self.pages.values())
         return {"documentId": self.document_id, "fileName": self.file_name,
                 "filePath": self.file_path, "fileSizeBytes": self.file_size,
+                "fileCrc32": self.file_crc32,
                 "pageCount": self.page_count, "pdfVersion": self.pdf_version,
                 "status": self.status, "error": self.error,
                 "parsedAt": self.parsed_at,
@@ -130,7 +132,8 @@ class Store:
         path = os.path.join(STORAGE_DIR, "uploads", f"{document_id}.pdf")
         with open(path, "wb") as f:
             f.write(content)
-        d = Document(document_id, file_name, path, len(content))
+        crc32 = f"{zlib.crc32(content) & 0xffffffff:08X}"
+        d = Document(document_id, file_name, path, len(content), crc32)
         self.docs[document_id] = d
         return d
 

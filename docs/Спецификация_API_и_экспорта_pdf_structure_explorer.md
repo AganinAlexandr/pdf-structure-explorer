@@ -131,6 +131,7 @@ E:/output/pdf-structure-explorer/exports/<document_id>/
 Колонки:
 - `document_id`
 - `file_name`
+- `file_crc32`
 - `file_path`
 - `file_size_bytes`
 - `page_count`
@@ -513,6 +514,7 @@ E:/output/pdf-structure-explorer/exports/<document_id>/
   "data": {
     "documentId": "doc_001",
     "fileName": "sample.pdf",
+    "fileCrc32": "8A52FDF1",
     "status": "uploaded"
   }
 }
