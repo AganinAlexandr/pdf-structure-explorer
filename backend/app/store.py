@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Хранилище документов: загрузка, фоновый разбор, агрегаты."""
 from __future__ import annotations
-import os, threading, uuid, datetime, zlib
+import os, threading, datetime, zlib
 import fitz
 
 from app import model
@@ -12,6 +12,10 @@ EXPORT_DIR = os.environ.get("PSE_EXPORT_DIR", "./storage/exports")
 
 def _now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def _document_id_for_crc32(crc32: str) -> str:
+    return f"doc_{crc32.lower()}"
 
 
 class Document:
@@ -142,11 +146,11 @@ class Store:
         os.makedirs(EXPORT_DIR, exist_ok=True)
 
     def add(self, file_name: str, content: bytes) -> Document:
-        document_id = "doc_" + uuid.uuid4().hex[:8]
+        crc32 = f"{zlib.crc32(content) & 0xffffffff:08X}"
+        document_id = _document_id_for_crc32(crc32)
         path = os.path.join(STORAGE_DIR, "uploads", f"{document_id}.pdf")
         with open(path, "wb") as f:
             f.write(content)
-        crc32 = f"{zlib.crc32(content) & 0xffffffff:08X}"
         d = Document(document_id, file_name, path, len(content), crc32)
         self.docs[document_id] = d
         return d
