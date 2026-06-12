@@ -73,6 +73,16 @@ async def upload_document(file: UploadFile = File(...)):
     if not (file.filename or "").lower().endswith(".pdf"):
         raise ApiError("INVALID_FILE_TYPE", "Only PDF files are accepted", 400)
     content = await file.read()
+    import zlib
+    crc32 = f"{zlib.crc32(content) & 0xffffffff:08X}"
+    existing = store.find_by_crc(crc32)
+    if existing is not None:
+        return ok({"documentId": existing.document_id,
+                   "fileName": existing.file_name,
+                   "fileCrc32": existing.file_crc32,
+                   "pageCount": existing.page_count,
+                   "status": existing.status,
+                   "duplicateOf": existing.document_id})
     try:
         d = store.add(file.filename, content)
     except Exception as e:                                  # noqa: BLE001
@@ -303,6 +313,11 @@ class ExportOptions(BaseModel):
 @app.post(API + "/documents/{document_id}/export")
 def export_document(document_id: str, opts: ExportOptions | None = None):
     d = get_doc(document_id, need_parsed=True)
+    if d.status != "parsed":
+        raise ApiError("VALIDATION_ERROR",
+                       f"Export requires status 'parsed', current is "
+                       f"'{d.status}' ({d.processed_pages}/{d.page_count} "
+                       f"pages processed)", 409)
     opts = opts or ExportOptions()
     if opts.format != "csv_bundle":
         raise ApiError("VALIDATION_ERROR",

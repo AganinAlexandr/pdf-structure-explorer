@@ -34,6 +34,7 @@ class Document:
         self.lock = threading.Lock()
         with fitz.open(file_path) as d:
             self.page_count = d.page_count
+            self.pdf_version = (d.metadata or {}).get("format", "")
             ocgs = d.get_ocgs() or {}
             self.has_native_layers = bool(ocgs)
             self.native_layers = [{"layerId": f"layer_native_{x}",
@@ -77,6 +78,17 @@ class Document:
         langs = {t["languageCode"] for t in p["textSegments"]}
         broken = sum(1 for t in p["textSegments"]
                      if t["encodingStatus"] == "broken_encoding")
+        n_text = cnt.get("text", 0)
+        n_vec = cnt.get("lines", 0) + cnt.get("frames", 0) + cnt.get("other_vector", 0)
+        n_img = cnt.get("images", 0)
+        if n_text == 0 and n_vec <= 5 and n_img >= 1:
+            page_kind = "scanned"
+        elif n_text == 0 and n_vec > 50:
+            page_kind = "text_outlined_suspect"
+        elif n_img >= 1 and n_vec > 500:
+            page_kind = "hybrid"
+        else:
+            page_kind = "vector"
         return {"pageId": p["pageId"], "pageNumber": n,
                 "pageWidth": p["pageWidth"], "pageHeight": p["pageHeight"],
                 "rotation": p["rotation"],
@@ -85,6 +97,8 @@ class Document:
                 "lineCount": cnt.get("lines", 0),
                 "frameCount": cnt.get("frames", 0),
                 "imageCount": cnt.get("images", 0),
+                "otherVectorCount": cnt.get("other_vector", 0),
+                "pageKind": page_kind,
                 "tableCount": len(p["tables"]),
                 "tableCellCount": len(p["tableCells"]),
                 "languageCount": len(langs),
@@ -136,6 +150,12 @@ class Store:
         d = Document(document_id, file_name, path, len(content), crc32)
         self.docs[document_id] = d
         return d
+
+    def find_by_crc(self, crc32: str) -> Document | None:
+        for d in self.docs.values():
+            if d.file_crc32 == crc32:
+                return d
+        return None
 
     def get(self, document_id: str) -> Document | None:
         return self.docs.get(document_id)

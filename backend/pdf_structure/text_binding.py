@@ -25,6 +25,10 @@ class TextBindConfig:
     confirm_text_cells: int = 2     # минимум текстовых ячеек для таблицы
     huge_cell_ratio: float = 12.0   # отсев пустых ячеек крупнее медианы в N раз
     center_eps: float = 0.5         # pt, допуск попадания центра span в ячейку
+    symbol_serial_min: int = 5
+    symbol_cell_max_w: float = 60.0
+    symbol_cell_max_h: float = 40.0
+    symbol_cells_max: int = 12
     max_cell_page_ratio: float = 0.35
 
 
@@ -136,8 +140,39 @@ def bind_text(structures, spans, cfg: TextBindConfig | None = None,
         if not st["confirmed"]:
             st["kind"] = "frame_group"     # геометрия таблицы без текста
 
+    _demote_symbol_grids(structures, cfg)
     free = [sp for k, sp in enumerate(spans) if not used[k]]
     return structures, free
+
+
+def _demote_symbol_grids(structures, cfg: TextBindConfig):
+    groups = {}
+    for st in structures:
+        if st.get("kind") not in ("table", "frame_group") or not st.get("cells"):
+            continue
+        cells = st["cells"]
+        if len(cells) > cfg.symbol_cells_max:
+            continue
+        widths = sorted(c["bbox"][2] - c["bbox"][0] for c in cells)
+        heights = sorted(c["bbox"][3] - c["bbox"][1] for c in cells)
+        med_w = widths[len(widths) // 2]
+        med_h = heights[len(heights) // 2]
+        if med_w > cfg.symbol_cell_max_w or med_h > cfg.symbol_cell_max_h:
+            continue
+        key = (
+            st.get("rows"),
+            st.get("cols"),
+            round(med_w / 5),
+            round(med_h / 5),
+        )
+        groups.setdefault(key, []).append(st)
+
+    for members in groups.values():
+        if len(members) < cfg.symbol_serial_min:
+            continue
+        for st in members:
+            st["kind"] = "symbol_grid"
+            st["symbol_series"] = len(members)
 
 
 def table_matrix(table):

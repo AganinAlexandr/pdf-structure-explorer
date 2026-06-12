@@ -22,6 +22,7 @@ SUBTYPES = [
     ("raster_image", "images", "Растровое изображение"),
     ("tiled_pattern", "images", "Многократно размещённый растровый тайл"),
     ("grid_table", "tables", "Таблица по сетке линий"),
+    ("symbol_grid", "other_vector", "Повторяемая мини-сетка условного обозначения"),
     ("curve", "other_vector", "Кривая Безье"),
     ("complex_vector", "other_vector", "Сложная векторная структура (чертёж)"),
 ]
@@ -195,6 +196,11 @@ def parse_page(doc: fitz.Document, page_number: int,
             add_element("other_vector", "complex_vector", st["bbox"],
                         st["draw_order"],
                         segmentCount=st.get("segment_count", 0))
+        elif k == "symbol_grid":
+            add_element("other_vector", "symbol_grid", st["table_bbox"],
+                        st["draw_order"],
+                        cellCount=st.get("cell_count", 0),
+                        symbolSeries=st.get("symbol_series", 0))
     for o in res["others"]:
         if o["subtype"] == "diagonal_line":
             add_element("lines", "diagonal_line", o["bbox"], o["draw_order"],

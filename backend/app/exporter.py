@@ -192,10 +192,12 @@ def export_csv_bundle(doc, export_dir):
     emit("page_summary.csv",
          ["document_id", "page_id", "page_number", "element_count",
           "text_count", "line_count", "frame_count", "image_count",
+          "other_vector_count", "page_kind",
           "table_count", "table_cell_count", "language_count",
           "broken_encoding_count"],
          [[doc.document_id, s["pageId"], s["pageNumber"], s["elementCount"],
            s["textCount"], s["lineCount"], s["frameCount"], s["imageCount"],
+           s["otherVectorCount"], s["pageKind"],
            s["tableCount"], s["tableCellCount"], s["languageCount"],
            s["brokenEncodingCount"]] for s in summaries])
 
