@@ -23,6 +23,7 @@ LINK_FIELDS = [
     "subsection_type",
     "subsection_filter",
     "source_catalog_group",
+    "partial_bundle",
     "match_found",
     "match_count",
     "match_mode",
@@ -37,6 +38,7 @@ SECTION_DOCUMENT_COLUMNS = [
     "section_type",
     "section_filter",
     "source_catalog_group",
+    "partial_bundle",
     "match_mode",
 ]
 

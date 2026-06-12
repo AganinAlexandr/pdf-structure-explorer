@@ -79,7 +79,9 @@ def parse_page(doc: fitz.Document, page_number: int,
     page_id = f"{document_id}_p_{page_number}"
     res = geometry.analyze_page(page, cfg)
     spans = text_binding.extract_spans(page)
-    structures, _free = text_binding.bind_text(res["structures"], spans)
+    rect = page.rect
+    structures, _free = text_binding.bind_text(
+        res["structures"], spans, page_area=rect.width * rect.height)
 
     seq = {"el": 0, "txt": 0, "img": 0, "tbl": 0}
     def next_id(kind):
@@ -246,7 +248,6 @@ def parse_page(doc: fitz.Document, page_number: int,
                "bboxHeight": _bbox_fields(bbox)["height"],
                "bboxArea": _bbox_fields(bbox)["bboxArea"]}})
 
-    rect = page.rect
     return {"pageId": page_id, "pageNumber": page_number,
             "pageWidth": round(rect.width, 2), "pageHeight": round(rect.height, 2),
             "rotation": page.rotation,

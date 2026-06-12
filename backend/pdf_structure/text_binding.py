@@ -25,6 +25,7 @@ class TextBindConfig:
     confirm_text_cells: int = 2     # минимум текстовых ячеек для таблицы
     huge_cell_ratio: float = 12.0   # отсев пустых ячеек крупнее медианы в N раз
     center_eps: float = 0.5         # pt, допуск попадания центра span в ячейку
+    max_cell_page_ratio: float = 0.35
 
 
 def extract_spans(page):
@@ -54,7 +55,8 @@ def _inside(sp, bbox, eps):
     return (x0-eps <= sp["cx"] <= x1+eps) and (y0-eps <= sp["cy"] <= y1+eps)
 
 
-def bind_text(structures, spans, cfg: TextBindConfig | None = None):
+def bind_text(structures, spans, cfg: TextBindConfig | None = None,
+              page_area: float | None = None):
     """Обогащает structures текстом; возвращает (structures, free_spans).
 
     Таблицы получают: cells[*].text/has_text/spans,
@@ -65,6 +67,7 @@ def bind_text(structures, spans, cfg: TextBindConfig | None = None):
     """
     cfg = cfg or TextBindConfig()
     used = [False] * len(spans)
+    span_index = {id(sp): k for k, sp in enumerate(spans)}
 
     for st in structures:
         if st.get("kind") != "table" or "cells" not in st:
@@ -92,15 +95,30 @@ def bind_text(structures, spans, cfg: TextBindConfig | None = None):
             c["text"] = " ".join(s["text"] for s in c["spans"]).strip()
             c["has_text"] = bool(c["text"])
 
-        # отсев аномально больших ПУСТЫХ ячеек (поле листа в рамке)
+        # Drop oversized sheet-field cells, even when they captured page text.
         text_areas = [(c["bbox"][2]-c["bbox"][0]) * (c["bbox"][3]-c["bbox"][1])
                       for c in cells if c["has_text"]]
-        if text_areas:
-            lim = cfg.huge_cell_ratio * median(text_areas)
-            kept = [c for c in cells
-                    if c["has_text"] or
-                    (c["bbox"][2]-c["bbox"][0]) * (c["bbox"][3]-c["bbox"][1]) <= lim]
+        if text_areas or page_area:
+            lim = cfg.huge_cell_ratio * median(text_areas) if text_areas else None
+            page_lim = cfg.max_cell_page_ratio * page_area if page_area else None
+
+            def keep_cell(cell):
+                area = ((cell["bbox"][2] - cell["bbox"][0]) *
+                        (cell["bbox"][3] - cell["bbox"][1]))
+                if page_lim is not None and area > page_lim:
+                    return False
+                if cell["has_text"]:
+                    return True
+                return lim is None or area <= lim
+
+            kept = [c for c in cells if keep_cell(c)]
             if len(kept) != len(cells):
+                dropped = [c for c in cells if not keep_cell(c)]
+                for cell in dropped:
+                    for sp in cell.get("spans", []):
+                        idx = span_index.get(id(sp))
+                        if idx is not None:
+                            used[idx] = False
                 st["dropped_huge_cells"] = len(cells) - len(kept)
                 st["cells"] = cells = kept
                 st["cell_count"] = len(cells)

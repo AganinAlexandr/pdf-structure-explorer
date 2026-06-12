@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import unicodedata
 import zlib
 from collections import Counter
 from pathlib import Path
@@ -16,10 +17,13 @@ DEFAULT_EXPORTS_ROOT = Path(r"E:\output\pdf-structure-explorer\exports")
 DEFAULT_OBJECT_MAP = Path(r"E:\commons\pdf-structure-explorer\reference\simplified_objects_section_map.xlsx")
 DEFAULT_OUTPUT_STEM = Path(r"E:\output\pdf-structure-explorer\Elements_PDF_document_links")
 
+TRUTHY_VALUES = {"true", "1", "истина", "да", "yes"}
+
 LINK_COLUMNS = [
     "document_id",
     "file_name",
     "file_crc32",
+    "file_size_bytes",
     "export_document_id",
     "object_code",
     "object_name",
@@ -29,6 +33,7 @@ LINK_COLUMNS = [
     "subsection_type",
     "subsection_filter",
     "source_catalog_group",
+    "partial_bundle",
     "match_found",
     "match_count",
     "match_mode",
@@ -45,11 +50,13 @@ PIVOT_OUTPUT_COLUMNS = [
     "total",
     "file_name",
     "file_crc32",
+    "file_size_bytes",
     "object_code",
     "object_name",
     "document_role",
     "section_type",
     "section_filter",
+    "partial_bundle",
     "match_found",
     "match_count",
     "match_mode",
@@ -66,7 +73,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def normalize_text(value: str) -> str:
-    return str(value or "").strip()
+    return unicodedata.normalize("NFC", str(value or "")).strip()
 
 
 def normalize_file_name(value: str) -> str:
@@ -77,11 +84,25 @@ def normalize_crc32(value: str) -> str:
     return normalize_text(value).upper()
 
 
+def normalize_size_bytes(value: str) -> str:
+    text = normalize_text(value)
+    if not text:
+        return ""
+    try:
+        return str(int(float(text)))
+    except ValueError:
+        return text
+
+
 def normalize_stored_path(value: str) -> Path | None:
     text = normalize_text(value)
     if not text:
         return None
     return Path(text.replace("/", "\\"))
+
+
+def is_truthy(value: str) -> bool:
+    return normalize_text(value).casefold() in TRUTHY_VALUES
 
 
 def compute_crc32(path: Path) -> str:
@@ -107,16 +128,24 @@ def load_xlsx_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     return rows, header
 
 
-def load_object_map(path: Path) -> dict[tuple[str, str], list[dict[str, str]]]:
+def load_object_map(path: Path) -> tuple[
+    dict[tuple[str, str], list[dict[str, str]]],
+    dict[str, list[dict[str, str]]],
+]:
     rows, _ = load_xlsx_rows(path)
-    by_key: dict[tuple[str, str], list[dict[str, str]]] = {}
-    grouped = {}
+    grouped_by_name_crc: dict[tuple[str, str], list[dict[str, str]]] = {}
+    grouped_by_crc: dict[str, list[dict[str, str]]] = {}
     for row in rows:
-        key = (normalize_file_name(row.get("file_name", "")), normalize_crc32(row.get("file_crc32", "")))
-        if not key[0] or not key[1]:
+        key = (
+            normalize_file_name(row.get("file_name", "")),
+            normalize_crc32(row.get("file_crc32", "")),
+        )
+        if not key[1]:
             continue
-        grouped.setdefault(key, []).append(row)
-    return grouped
+        if key[0]:
+            grouped_by_name_crc.setdefault(key, []).append(row)
+        grouped_by_crc.setdefault(key[1], []).append(row)
+    return grouped_by_name_crc, grouped_by_crc
 
 
 def load_export_documents(exports_root: Path) -> dict[str, dict[str, str]]:
@@ -125,8 +154,13 @@ def load_export_documents(exports_root: Path) -> dict[str, dict[str, str]]:
         doc_csv = folder / "documents.csv"
         if not doc_csv.exists():
             continue
-        with doc_csv.open("r", encoding="utf-8", newline="") as handle:
-            row = next(csv.DictReader(handle))
+        with doc_csv.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            try:
+                row = next(reader)
+            except StopIteration:
+                continue
+        row["partial_bundle"] = "true" if row.get("parse_status", "") not in ("", "parsed") else "false"
         if not normalize_crc32(row.get("file_crc32", "")):
             stored_path = normalize_stored_path(row.get("file_path", ""))
             if stored_path and stored_path.exists():
@@ -182,19 +216,44 @@ def extract_workbook_document_ids(path: Path) -> tuple[list[str], list[dict[str,
     return unique_ids, pivot_rows
 
 
-def choose_object_match(doc_row: dict[str, str], object_map: dict[tuple[str, str], list[dict[str, str]]]):
+def choose_preferred_match(matches: list[dict[str, str]]) -> dict[str, str]:
+    return next((row for row in matches if is_truthy(row.get("is_preferred_source", ""))), matches[0])
+
+
+def choose_object_match(
+    doc_row: dict[str, str],
+    object_map_by_name_crc: dict[tuple[str, str], list[dict[str, str]]],
+    object_map_by_crc: dict[str, list[dict[str, str]]],
+):
     key = (
         normalize_file_name(doc_row.get("file_name", "")),
         normalize_crc32(doc_row.get("file_crc32", "")),
     )
-    matches = object_map.get(key, [])
-    if not matches:
-        return None, 0
-    preferred = next((row for row in matches if row.get("is_preferred_source") == "true"), matches[0])
-    return preferred, len(matches)
+    matches = object_map_by_name_crc.get(key, [])
+    if matches:
+        return choose_preferred_match(matches), len(matches), "file_name+file_crc32"
+
+    crc = key[1]
+    if not crc:
+        return None, 0, ""
+
+    crc_matches = object_map_by_crc.get(crc, [])
+    if not crc_matches:
+        return None, 0, ""
+
+    size = normalize_size_bytes(doc_row.get("file_size_bytes", ""))
+    if size:
+        size_matches = [
+            row for row in crc_matches
+            if normalize_size_bytes(row.get("file_size_bytes", "")) == size
+        ]
+        if size_matches:
+            return choose_preferred_match(size_matches), len(size_matches), "crc32_only"
+
+    return choose_preferred_match(crc_matches), len(crc_matches), "crc32_only"
 
 
-def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]], object_map):
+def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]], object_map_by_name_crc, object_map_by_crc):
     stats = Counter()
     rows = []
     for document_id in document_ids:
@@ -205,6 +264,7 @@ def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]],
                 "document_id": document_id,
                 "file_name": "",
                 "file_crc32": "",
+                "file_size_bytes": "",
                 "export_document_id": "",
                 "object_code": "",
                 "object_name": "",
@@ -214,19 +274,22 @@ def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]],
                 "subsection_type": "",
                 "subsection_filter": "",
                 "source_catalog_group": "",
+                "partial_bundle": "false",
                 "match_found": "false",
                 "match_count": "0",
                 "match_mode": "missing_export_doc",
             })
             continue
 
-        linked, match_count = choose_object_match(export_row, object_map)
+        linked, match_count, match_mode = choose_object_match(export_row, object_map_by_name_crc, object_map_by_crc)
         if linked:
             stats["matched"] += 1
+            stats[f"matched_{match_mode}"] += 1
             rows.append({
                 "document_id": document_id,
                 "file_name": export_row.get("file_name", ""),
                 "file_crc32": export_row.get("file_crc32", ""),
+                "file_size_bytes": export_row.get("file_size_bytes", ""),
                 "export_document_id": export_row.get("document_id", ""),
                 "object_code": linked.get("object_code", ""),
                 "object_name": linked.get("object_name", ""),
@@ -236,9 +299,10 @@ def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]],
                 "subsection_type": linked.get("subsection_type", ""),
                 "subsection_filter": linked.get("subsection_filter", ""),
                 "source_catalog_group": linked.get("source_catalog_group", ""),
+                "partial_bundle": export_row.get("partial_bundle", "false"),
                 "match_found": "true",
                 "match_count": str(match_count),
-                "match_mode": "file_name+file_crc32",
+                "match_mode": match_mode,
             })
         else:
             stats["unmatched_object_map"] += 1
@@ -246,6 +310,7 @@ def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]],
                 "document_id": document_id,
                 "file_name": export_row.get("file_name", ""),
                 "file_crc32": export_row.get("file_crc32", ""),
+                "file_size_bytes": export_row.get("file_size_bytes", ""),
                 "export_document_id": export_row.get("document_id", ""),
                 "object_code": "",
                 "object_name": "",
@@ -255,6 +320,7 @@ def build_links(document_ids: list[str], export_docs: dict[str, dict[str, str]],
                 "subsection_type": "",
                 "subsection_filter": "",
                 "source_catalog_group": "",
+                "partial_bundle": export_row.get("partial_bundle", "false"),
                 "match_found": "false",
                 "match_count": "0",
                 "match_mode": "no_object_map_match",
@@ -281,11 +347,13 @@ def build_pivot_linked_rows(pivot_rows: list[dict[str, str]], link_index: dict[s
             "total": row["total"],
             "file_name": linked.get("file_name", ""),
             "file_crc32": linked.get("file_crc32", ""),
+            "file_size_bytes": linked.get("file_size_bytes", ""),
             "object_code": linked.get("object_code", ""),
             "object_name": linked.get("object_name", ""),
             "document_role": linked.get("document_role", ""),
             "section_type": linked.get("section_type", ""),
             "section_filter": linked.get("section_filter", ""),
+            "partial_bundle": linked.get("partial_bundle", "false"),
             "match_found": linked.get("match_found", "false"),
             "match_count": linked.get("match_count", "0"),
             "match_mode": linked.get("match_mode", ""),
@@ -331,8 +399,8 @@ def main() -> int:
 
     document_ids, pivot_rows = extract_workbook_document_ids(workbook_path)
     export_docs = load_export_documents(exports_root)
-    object_map = load_object_map(object_map_path)
-    link_rows, stats = build_links(document_ids, export_docs, object_map)
+    object_map_by_name_crc, object_map_by_crc = load_object_map(object_map_path)
+    link_rows, stats = build_links(document_ids, export_docs, object_map_by_name_crc, object_map_by_crc)
     pivot_linked_rows = build_pivot_linked_rows(pivot_rows, build_link_index(link_rows))
 
     csv_path = output_stem.with_suffix(".csv")
@@ -346,6 +414,8 @@ def main() -> int:
     print(f"Workbook document_ids: {len(document_ids)}")
     print(f"Matched to export docs: {len(document_ids) - stats['missing_export_doc']}")
     print(f"Matched to object map: {stats['matched']}")
+    print(f"Matched by file_name+file_crc32: {stats['matched_file_name+file_crc32']}")
+    print(f"Matched by crc32 only (renamed copies): {stats['matched_crc32_only']}")
     print(f"Missing export docs: {stats['missing_export_doc']}")
     print(f"No object-map match: {stats['unmatched_object_map']}")
     print(f"Links CSV: {csv_path}")

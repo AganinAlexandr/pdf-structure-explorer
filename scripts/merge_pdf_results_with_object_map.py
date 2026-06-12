@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
@@ -38,6 +39,8 @@ OUTPUT_FIELDS = [
 PATH_CANDIDATES = ["full_path", "file_path", "path"]
 FILE_NAME_CANDIDATES = ["file_name", "filename", "file"]
 CRC_CANDIDATES = ["file_crc32", "crc32"]
+SIZE_CANDIDATES = ["file_size_bytes", "size_bytes", "file_size"]
+TRUTHY_VALUES = {"true", "1", "истина", "да", "yes"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,7 +61,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def normalize_text(value: str) -> str:
-    return str(value or "").strip()
+    return unicodedata.normalize("NFC", str(value or "")).strip()
 
 
 def normalize_path(value: str) -> str:
@@ -72,8 +75,22 @@ def normalize_crc32(value: str) -> str:
     return normalize_text(value).upper()
 
 
+def normalize_size_bytes(value: str) -> str:
+    text = normalize_text(value)
+    if not text:
+        return ""
+    try:
+        return str(int(float(text)))
+    except ValueError:
+        return text
+
+
 def normalize_file_name(value: str) -> str:
     return normalize_text(value).casefold()
+
+
+def is_truthy(value: str) -> bool:
+    return normalize_text(value).casefold() in TRUTHY_VALUES
 
 
 def find_column(columns: Iterable[str], candidates: list[str]) -> str | None:
@@ -117,7 +134,11 @@ def load_table(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     raise ValueError(f"Unsupported table format: {path.suffix}")
 
 
-def choose_match(row: dict[str, str], map_by_path, map_by_name_crc, path_col, file_name_col, crc_col):
+def choose_preferred_match(matches: list[dict[str, str]]) -> dict[str, str]:
+    return next((item for item in matches if is_truthy(item.get("is_preferred_source", ""))), matches[0])
+
+
+def choose_match(row: dict[str, str], map_by_path, map_by_name_crc, map_by_crc, path_col, file_name_col, crc_col, size_col):
     if path_col:
         key = normalize_path(row.get(path_col, ""))
         if key and key in map_by_path:
@@ -130,8 +151,20 @@ def choose_match(row: dict[str, str], map_by_path, map_by_name_crc, path_col, fi
         )
         if key[0] and key[1] and key in map_by_name_crc:
             matches = map_by_name_crc[key]
-            preferred = next((item for item in matches if item.get("is_preferred_source") == "true"), matches[0])
-            return preferred, "file_name+file_crc32", len(matches)
+            return choose_preferred_match(matches), "file_name+file_crc32", len(matches)
+    if crc_col:
+        crc = normalize_crc32(row.get(crc_col, ""))
+        if crc and crc in map_by_crc:
+            matches = map_by_crc[crc]
+            size = normalize_size_bytes(row.get(size_col, "")) if size_col else ""
+            if size:
+                size_matches = [
+                    item for item in matches
+                    if normalize_size_bytes(item.get("file_size_bytes", "")) == size
+                ]
+                if size_matches:
+                    return choose_preferred_match(size_matches), "crc32_only", len(size_matches)
+            return choose_preferred_match(matches), "crc32_only", len(matches)
     return None, "", 0
 
 
@@ -139,9 +172,11 @@ def build_indices(rows: list[dict[str, str]], columns: list[str]):
     path_col = find_column(columns, PATH_CANDIDATES)
     file_name_col = find_column(columns, FILE_NAME_CANDIDATES)
     crc_col = find_column(columns, CRC_CANDIDATES)
+    size_col = find_column(columns, SIZE_CANDIDATES)
 
     by_path = defaultdict(list)
     by_name_crc = defaultdict(list)
+    by_crc = defaultdict(list)
 
     for row in rows:
         if path_col:
@@ -155,14 +190,17 @@ def build_indices(rows: list[dict[str, str]], columns: list[str]):
             )
             if key[0] and key[1]:
                 by_name_crc[key].append(row)
-    return by_path, by_name_crc, path_col, file_name_col, crc_col
+            if key[1]:
+                by_crc[key[1]].append(row)
+    return by_path, by_name_crc, by_crc, path_col, file_name_col, crc_col, size_col
 
 
 def merge_rows(input_rows, input_columns, map_rows, map_columns):
-    map_by_path, map_by_name_crc, map_path_col, map_file_name_col, map_crc_col = build_indices(map_rows, map_columns)
+    map_by_path, map_by_name_crc, map_by_crc, _map_path_col, _map_file_name_col, _map_crc_col, _map_size_col = build_indices(map_rows, map_columns)
     input_path_col = find_column(input_columns, PATH_CANDIDATES)
     input_file_name_col = find_column(input_columns, FILE_NAME_CANDIDATES)
     input_crc_col = find_column(input_columns, CRC_CANDIDATES)
+    input_size_col = find_column(input_columns, SIZE_CANDIDATES)
 
     stats = Counter()
     merged = []
@@ -171,9 +209,11 @@ def merge_rows(input_rows, input_columns, map_rows, map_columns):
             row,
             map_by_path,
             map_by_name_crc,
+            map_by_crc,
             input_path_col,
             input_file_name_col,
             input_crc_col,
+            input_size_col,
         )
         out = dict(row)
         if linked:
@@ -263,6 +303,7 @@ def main() -> int:
     print(f"Map rows: {len(map_rows)}")
     print(f"Matched by full_path: {stats['matched_full_path']}")
     print(f"Matched by file_name+file_crc32: {stats['matched_file_name+file_crc32']}")
+    print(f"Matched by crc32 only (renamed copies): {stats['matched_crc32_only']}")
     print(f"Unmatched: {stats['unmatched']}")
     print(f"Output CSV: {output_csv}")
     print(f"Output XLSX: {output_xlsx}")
